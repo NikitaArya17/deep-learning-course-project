@@ -21,9 +21,11 @@ import SimpleITK as sitk
 import tensorflow as tf
 from tensorflow import keras
 
-"""# 1. Download and Load the Training, Test and Validation Datasets
+"""# 1. Download and Load the Training and Validation Datasets
 
 Data source: [BOston Neonatal Brain Injury Data](https://zenodo.org/records/10602767)
+
+Note: The test dataset will be derived by splitting the training dataset appropriately.
 
 ### *A Note on the Training Data* ###
 
@@ -46,7 +48,7 @@ The second group comprises ADC maps that have undergone Z-score normalisation. T
 
  So, Z-score normalisation is required to ensure that the movement of water molecules is compared across brain regions, according to each specific region's healthy baseline for molecular movement.
 
- The third group comprises images where the brain lesions have been manually annotated by medical experts.
+ The third group comprises binary masks of the images in which the brain lesions have been manually annotated by trained physicians.
 
  More information can be found on these pages:
 
@@ -58,15 +60,16 @@ The second group comprises ADC maps that have undergone Z-score normalisation. T
 from google.colab import drive
 drive.mount('/content/drive')
 
-!unzip -q /content/drive/MyDrive/CSE602_Project_Data/train_data.zip
+!unzip -q /content/drive/MyDrive/CSE602_Project_Data/train_data.zipn
+!unzip -q /content/drive/MyDrive/CSE602_Project_Data/val_data.zip
 
 #Some basic EDA; we read in and visualise the first five raw ADC maps to get a glimpse of the data we'll be dealing with.
 
 
-data_dir = '/content/BONBID2023_Train'
+train_dir = '/content/BONBID2023_Train'
 
 for i in [10, 14, 15, 28, 62]:
-  train_image = sitk.ReadImage(f"{data_dir}/1ADC_ss/MGHNICU_0{i}-VISIT_01-ADC_ss.mha")
+  train_image = sitk.ReadImage(f"{train_dir}/1ADC_ss/MGHNICU_0{i}-VISIT_01-ADC_ss.mha")
   train_array = sitk.GetArrayFromImage(train_image)
   mid_slice = train_array.shape[0] // 2
 
@@ -79,7 +82,7 @@ for i in [10, 14, 15, 28, 62]:
 # We do the same for the Z-score normalised ADC maps...
 
 for i in [10, 14, 15, 28, 62]:
-  train_image = sitk.ReadImage(f"{data_dir}/2Z_ADC/Zmap_MGHNICU_0{i}-VISIT_01-ADC_smooth2mm_clipped10.mha")
+  train_image = sitk.ReadImage(f"{train_dir}/2Z_ADC/Zmap_MGHNICU_0{i}-VISIT_01-ADC_smooth2mm_clipped10.mha")
   train_array = sitk.GetArrayFromImage(train_image)
   mid_slice = train_array.shape[0] // 2
 
@@ -89,9 +92,9 @@ for i in [10, 14, 15, 28, 62]:
   plt.axis('off')
   plt.show()
 
-# ...and for the images with brain lesions annotated by experts.
+# ...and for the binary image masks with brain lesions annotated by experts.
 for i in [10, 14, 15, 28, 62]:
-  train_image = sitk.ReadImage(f"{data_dir}/3LABEL/MGHNICU_0{i}-VISIT_01_lesion.mha")
+  train_image = sitk.ReadImage(f"{train_dir}/3LABEL/MGHNICU_0{i}-VISIT_01_lesion.mha")
   train_array = sitk.GetArrayFromImage(train_image)
   mid_slice = train_array.shape[0] // 2
 
@@ -100,3 +103,47 @@ for i in [10, 14, 15, 28, 62]:
   plt.title(f"Slice {mid_slice}, Image {i}")
   plt.axis('off')
   plt.show()
+
+# Let's also have a look at a sample of the validation data.
+
+#First, the raw image...
+
+val_dir_raw =  '/content/1ADC_ss'
+
+val_image = sitk.ReadImage(f"{val_dir_raw}/MGHNICU_001-VISIT_01-ADC_ss.mha")
+val_array = sitk.GetArrayFromImage(val_image)
+mid_slice = val_array.shape[0] // 2
+
+plt.figure(figsize=(8, 6))
+plt.imshow(val_array[mid_slice, :, :], cmap = 'gray')
+plt.title(f"Slice {mid_slice}, Image {i}")
+plt.axis('off')
+plt.show()
+
+#...next, the z-score normalised image...
+
+val_dir_raw =  '/content/2Z_ADC'
+
+val_image = sitk.ReadImage(f"{val_dir_raw}/Zmap_MGHNICU_001-VISIT_01-ADC_smooth2mm_clipped10.mha")
+val_array = sitk.GetArrayFromImage(val_image)
+mid_slice = val_array.shape[0] // 2
+
+plt.figure(figsize=(8, 6))
+plt.imshow(val_array[mid_slice, :, :], cmap = 'gray')
+plt.title(f"Slice {mid_slice}, Image {i}")
+plt.axis('off')
+plt.show()
+
+#...and, finally, the physician-annotated binary mask.
+
+val_dir_raw =  '/content/3LABEL'
+
+val_image = sitk.ReadImage(f"{val_dir_raw}/MGHNICU_001-VISIT_01_lesion.mha")
+val_array = sitk.GetArrayFromImage(val_image)
+mid_slice = val_array.shape[0] // 2
+
+plt.figure(figsize=(8, 6))
+plt.imshow(val_array[mid_slice, :, :], cmap = 'gray')
+plt.title(f"Slice {mid_slice}, Image {i}")
+plt.axis('off')
+plt.show()
