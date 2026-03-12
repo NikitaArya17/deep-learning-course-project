@@ -20,12 +20,11 @@ import sklearn as skl
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorflow import keras
+from keras import layers, Model
 
-"""# 1. Download and Load the Training and Validation Datasets
+"""# 1. Download and Load the Training, Test and Validation Datasets
 
 Data source: [BOston Neonatal Brain Injury Data](https://zenodo.org/records/10602767)
-
-Note: The test dataset will be derived by splitting the training dataset appropriately.
 
 ### *A Note on the Training Data* ###
 
@@ -60,8 +59,10 @@ The second group comprises ADC maps that have undergone Z-score normalisation. T
 from google.colab import drive
 drive.mount('/content/drive')
 
-!unzip -q /content/drive/MyDrive/CSE602_Project_Data/train_data.zipn
+!unzip -q /content/drive/MyDrive/CSE602_Project_Data/train_data.zip
 !unzip -q /content/drive/MyDrive/CSE602_Project_Data/val_data.zip
+!tar -xvf /content/drive/MyDrive/CSE602_Project_Data/atlases.tar.gz
+#!unzip -q /content/drive/MyDrive/CSE602_Project_Data/test_data.zip
 
 #Some basic EDA; we read in and visualise the first five raw ADC maps to get a glimpse of the data we'll be dealing with.
 
@@ -75,9 +76,10 @@ for i in [10, 14, 15, 28, 62]:
 
   plt.figure(figsize=(8, 6))
   plt.imshow(train_array[mid_slice, :, :], cmap = 'gray')
-  plt.title(f"Slice {mid_slice}, Image {i}")
+  plt.title(f"Image {i}")
   plt.axis('off')
   plt.show()
+  print(train_image.GetSize())
 
 # We do the same for the Z-score normalised ADC maps...
 
@@ -88,9 +90,10 @@ for i in [10, 14, 15, 28, 62]:
 
   plt.figure(figsize=(8, 6))
   plt.imshow(train_array[mid_slice, :, :], cmap = 'gray')
-  plt.title(f"Slice {mid_slice}, Image {i}")
+  plt.title(f"Image {i}")
   plt.axis('off')
   plt.show()
+  print(train_image.GetSize())
 
 # ...and for the binary image masks with brain lesions annotated by experts.
 for i in [10, 14, 15, 28, 62]:
@@ -100,50 +103,79 @@ for i in [10, 14, 15, 28, 62]:
 
   plt.figure(figsize=(8, 6))
   plt.imshow(train_array[mid_slice, :, :], cmap = 'gray')
-  plt.title(f"Slice {mid_slice}, Image {i}")
+  plt.title(f"Image {i}")
   plt.axis('off')
   plt.show()
+  print(train_image.GetSize())
 
-# Let's also have a look at a sample of the validation data.
+file_path = '/content/atlases/lesion_atlases/readme.txt'
 
-#First, the raw image...
+with open(file_path, 'r') as file:
+  content = file.read()
 
-val_dir_raw =  '/content/1ADC_ss'
+content
 
-val_image = sitk.ReadImage(f"{val_dir_raw}/MGHNICU_001-VISIT_01-ADC_ss.mha")
-val_array = sitk.GetArrayFromImage(val_image)
-mid_slice = val_array.shape[0] // 2
+norm_path= '/content/atlases/normal_atlases/readme_normal_atlases.txt'
 
-plt.figure(figsize=(8, 6))
-plt.imshow(val_array[mid_slice, :, :], cmap = 'gray')
-plt.title(f"Slice {mid_slice}, Image {i}")
-plt.axis('off')
-plt.show()
+with open(norm_path, 'r') as file:
+  norm_content = file.read()
 
-#...next, the z-score normalised image...
+norm_content
 
-val_dir_raw =  '/content/2Z_ADC'
+"""##2. Build and Train the Model
 
-val_image = sitk.ReadImage(f"{val_dir_raw}/Zmap_MGHNICU_001-VISIT_01-ADC_smooth2mm_clipped10.mha")
-val_array = sitk.GetArrayFromImage(val_image)
-mid_slice = val_array.shape[0] // 2
+The chosen model architecture is the [2.5D Transformer Backbone U-Net Model](https://www.mdpi.com/2076-3425/15/8/778#:~:text=To%20evaluate%20the%20effectiveness%20of,diagnostic%20tools%20in%20clinical%20settings.).
 
-plt.figure(figsize=(8, 6))
-plt.imshow(val_array[mid_slice, :, :], cmap = 'gray')
-plt.title(f"Slice {mid_slice}, Image {i}")
-plt.axis('off')
-plt.show()
 
-#...and, finally, the physician-annotated binary mask.
+This architecture has been chosen as it has achieved a Dice score of 0.8153 while segmented brain lesions in stroke patients.
 
-val_dir_raw =  '/content/3LABEL'
 
-val_image = sitk.ReadImage(f"{val_dir_raw}/MGHNICU_001-VISIT_01_lesion.mha")
-val_array = sitk.GetArrayFromImage(val_image)
-mid_slice = val_array.shape[0] // 2
+The detailed rationale for this choice of architecture may be found in the explanatory project idea presentation which has been uploaded to this repository.
 
-plt.figure(figsize=(8, 6))
-plt.imshow(val_array[mid_slice, :, :], cmap = 'gray')
-plt.title(f"Slice {mid_slice}, Image {i}")
-plt.axis('off')
-plt.show()
+
+The following model architecture is a baseline architecture to implement this model. Parameters will be edited according to the model's performance on initial runs.
+"""
+
+def transformer_block(x, num_heads = 4, key_dim = 64, mlp_dim = 256, dropout = 0.1):
+    attn_out = layers.MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)(x, x)
+    attn_out = layers.Dropout(dropout)(attn_out)
+    x = layers.Add()([x, attn_out])
+    x = layers.LayerNormalization(epsilon=1e-6)(x)
+
+    mlp_out = layers.Dense(mlp_dim, activation='gelu')(x)
+    mlp_out = layers.Dense(x.shape[-1])(mlp_out)
+    mlp_out = layers.Dropout(dropout)(mlp_out)
+    x = layers.Add()([x, mlp_out])
+    x = layers.LayerNormalization(epsilon=1e-6)(x)
+    return x
+
+def build_2_5d_transunet(input_shape=(128, 128, 23), num_classes = 1):
+    inputs = layers.Input(shape=input_shape)
+
+    c1 = layers.Conv2D(64, 3, activation='relu', padding='same')(inputs)
+    c1 = layers.Conv2D(64, 3, activation='relu', padding='same')(c1)
+    p1 = layers.MaxPooling2D()(c1)
+
+    c2 = layers.Conv2D(128, 3, activation='relu', padding='same')(p1)
+    c2 = layers.Conv2D(128, 3, activation='relu', padding='same')(c2)
+    p2 = layers.MaxPooling2D()(c2)
+
+    shape = p2.shape
+    patch_dim = shape[-1]
+    flattened = layers.Reshape((shape[1] * shape[2], patch_dim))(p2)
+
+    t1 = transformer_block(flattened)
+    t2 = transformer_block(t1)
+
+    t_feat = layers.Reshape((shape[1], shape[2], patch_dim))(t2)
+    t_feat = layers.Conv2D(128, 3, padding='same', activation='relu')(t_feat)
+
+    u1 = layers.Conv2DTranspose(64, 2, strides=2, padding='same')(t_feat)
+    u1 = layers.concatenate([u1, c1])
+    d1 = layers.Conv2D(64, 3, activation='relu', padding='same')(u1)
+    d1 = layers.Conv2D(64, 3, activation='relu', padding='same')(d1)
+
+    outputs = layers.Conv2D(num_classes, 1, activation='sigmoid')(d1)
+
+    return Model(inputs, outputs)
+
