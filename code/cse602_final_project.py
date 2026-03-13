@@ -20,6 +20,7 @@ import sklearn as skl
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorflow import keras
+import keras.backend as K
 from keras import layers, Model
 
 """# 1. Download and Load the Training, Test and Validation Datasets
@@ -152,8 +153,8 @@ def transformer_block(x, num_heads = 4, key_dim = 64, mlp_dim = 256, dropout = 0
 def build_2_5d_transunet(input_shape=(128, 128, 23), num_classes = 1):
     inputs = layers.Input(shape=input_shape)
 
-    c1 = layers.Conv2D(64, 3, activation='relu', padding='same')(inputs)
-    c1 = layers.Conv2D(64, 3, activation='relu', padding='same')(c1)
+    c1 = layers.Conv2D(128, 3, activation='relu', padding='same')(inputs)
+    c1 = layers.Conv2D(128, 3, activation='relu', padding='same')(c1)
     p1 = layers.MaxPooling2D()(c1)
 
     c2 = layers.Conv2D(128, 3, activation='relu', padding='same')(p1)
@@ -178,4 +179,20 @@ def build_2_5d_transunet(input_shape=(128, 128, 23), num_classes = 1):
     outputs = layers.Conv2D(num_classes, 1, activation='sigmoid')(d1)
 
     return Model(inputs, outputs)
+
+model = build_2_5d_transunet()
+model.summary()
+
+# We need to define a helper function to calculate the Dice coefficient as Keras does not provide this as a built-in metric.
+def dice_coef(y_true, y_pred, smooth=1):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+
+    intersection = K.sum(y_true_f * y_pred_f)
+    union = K.sum(y_true_f) + K.sum(y_pred_f)
+
+    dice = (2. * intersection + smooth) / (union + smooth)
+    return dice
+
+model.compile(optimizer = keras.optimizers.Adam(learning_rate = 0.001), loss = keras.losses.Dice(), metrics = [dice_coef])
 
