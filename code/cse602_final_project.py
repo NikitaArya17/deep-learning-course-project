@@ -16,7 +16,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import glob
 import sklearn as skl
+from skimage.transform import resize
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorflow import keras
@@ -123,7 +125,33 @@ with open(norm_path, 'r') as file:
 
 norm_content
 
-"""##2. Build and Train the Model
+"""##2. Read in and Preprocess the Training Data
+
+In order to build a model that uses multimodal data, using the ADC and ZADC maps as two separate modalities, we need to stack the ADC and ZADC maps to obtain the final training set.
+"""
+
+# First, we define a helper function to read in all the images from the directory sequentially.
+def load_images(directory_path):
+    image_list = []
+    filepaths = sorted(glob.glob(os.path.join(directory_path, '*.*')))
+
+    for filepath in filepaths:
+        sitk_img = sitk.ReadImage(filepath)
+        img_array = sitk.GetArrayFromImage(sitk_img)
+        image_list.append(img_array)
+
+    return np.concatenate(image_list, axis=0)
+
+# We use our helper function to load in and prepare the feature and target data.
+
+adc_train = load_images('/content/BONBID2023_Train/1ADC_ss')
+zadc_train = load_images('/content/BONBID2023_Train/2Z_ADC')
+
+X_train = np.stack((adc_train, zadc_train), axis = 1)
+y_train = load_images('/content/BONBID2023_Train/3LABEL')
+y_train = np.expand_dims(y_train, axis = -1)
+
+"""##3. Build and Train the Model
 
 The chosen model architecture is the [2.5D Transformer Backbone U-Net Model](https://www.mdpi.com/2076-3425/15/8/778#:~:text=To%20evaluate%20the%20effectiveness%20of,diagnostic%20tools%20in%20clinical%20settings.).
 
@@ -137,7 +165,7 @@ The detailed rationale for this choice of architecture may be found in the expla
 The following model architecture is a baseline architecture to implement this model. Parameters will be edited according to the model's performance on initial runs.
 """
 
-def transformer_block(x, num_heads = 4, key_dim = 64, mlp_dim = 256, dropout = 0.1):
+def transformer_block(x, num_heads = 4, key_dim = 128, mlp_dim = 256, dropout = 0.1):
     attn_out = layers.MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)(x, x)
     attn_out = layers.Dropout(dropout)(attn_out)
     x = layers.Add()([x, attn_out])
@@ -162,7 +190,7 @@ def build_2_5d_transunet(input_shape=(128, 128, 23), num_classes = 1):
     p2 = layers.MaxPooling2D()(c2)
 
     shape = p2.shape
-    patch_dim = shape[-1]
+    patch_dim = shape[-1] # 128
     flattened = layers.Reshape((shape[1] * shape[2], patch_dim))(p2)
 
     t1 = transformer_block(flattened)
@@ -171,12 +199,17 @@ def build_2_5d_transunet(input_shape=(128, 128, 23), num_classes = 1):
     t_feat = layers.Reshape((shape[1], shape[2], patch_dim))(t2)
     t_feat = layers.Conv2D(128, 3, padding='same', activation='relu')(t_feat)
 
-    u1 = layers.Conv2DTranspose(64, 2, strides=2, padding='same')(t_feat)
-    u1 = layers.concatenate([u1, c1])
-    d1 = layers.Conv2D(64, 3, activation='relu', padding='same')(u1)
-    d1 = layers.Conv2D(64, 3, activation='relu', padding='same')(d1)
+    u_block1 = layers.Conv2DTranspose(128, 2, strides=2, padding='same')(t_feat)
+    u_block1 = layers.concatenate([u_block1, c2])
+    conv_block1 = layers.Conv2D(128, 3, activation='relu', padding='same')(u_block1)
+    conv_block1 = layers.Conv2D(128, 3, activation='relu', padding='same')(conv_block1)
 
-    outputs = layers.Conv2D(num_classes, 1, activation='sigmoid')(d1)
+    u_block2 = layers.Conv2DTranspose(128, 2, strides=2, padding='same')(conv_block1)
+    u_block2 = layers.concatenate([u_block2, c1])
+    conv_block2 = layers.Conv2D(128, 3, activation='relu', padding='same')(u_block2)
+    conv_block2 = layers.Conv2D(128, 3, activation='relu', padding='same')(conv_block2)
+
+    outputs = layers.Conv2D(num_classes, 1, activation='sigmoid')(conv_block2)
 
     return Model(inputs, outputs)
 
@@ -194,5 +227,16 @@ def dice_coef(y_true, y_pred, smooth=1):
     dice = (2. * intersection + smooth) / (union + smooth)
     return dice
 
-model.compile(optimizer = keras.optimizers.Adam(learning_rate = 0.001), loss = keras.losses.Dice(), metrics = [dice_coef])
+# We also require a hybrid loss function to account for class imbalance in the training set.
+# This helper function combines the Dice Loss and Focal Loss.
+
+dice_loss = keras.losses.Dice()
+bce_focal_loss = keras.losses.BinaryFocalCrossentropy()
+
+def hybrid_loss(y_true, y_pred):
+  dice = dice_loss(y_true, y_pred)
+  focal = bce_focal_loss(y_true, y_pred)
+  return dice + focal
+
+model.compile(optimizer = keras.optimizers.Adam(learning_rate = 0.001), loss = hybrid_loss, metrics = [dice_coef, 'accuracy'])
 
