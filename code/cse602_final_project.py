@@ -19,15 +19,15 @@ import seaborn as sns
 import os
 import glob
 import sklearn as skl
+import albumentations as A
 from skimage.transform import resize
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorflow import keras
-import keras.backend as K
 import medpy
-from medpy.metric.binary import hd, hd95
+from medpy.metric.binary import hd, hd95, dc
 from keras import layers, Model
-from keras.callbacks import EarlyStopping
+from keras.callbacks import EarlyStopping, CSVLogger, ModelCheckpoint
 
 """# 1. Download and Load the Training, Test and Validation Datasets
 
@@ -68,7 +68,7 @@ drive.mount('/content/drive')
 
 !unzip -q /content/drive/MyDrive/CSE602_Project_Data/train_data.zip
 !unzip -q /content/drive/MyDrive/CSE602_Project_Data/val_data.zip
-!tar -xvf /content/drive/MyDrive/CSE602_Project_Data/atlases.tar.gz
+#!tar -xvf /content/drive/MyDrive/CSE602_Project_Data/atlases.tar.gz
 #!unzip -q /content/drive/MyDrive/CSE602_Project_Data/test_data.zip
 
 #Some basic EDA; we read in and visualise the first five raw ADC maps to get a glimpse of the data we'll be dealing with.
@@ -271,11 +271,14 @@ model.summary()
 
 # We need to define a helper function to calculate the Dice coefficient as Keras does not provide this as a built-in metric.
 def dice_coef(y_true, y_pred, smooth=1):
-    y_true_f = K.flatten(y_true)
-    y_pred_f = K.flatten(y_pred)
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
 
-    intersection = K.sum(y_true_f * y_pred_f)
-    union = K.sum(y_true_f) + K.sum(y_pred_f)
+    y_true_f = tf.reshape(y_true, [-1])
+    y_pred_f = tf.reshape(y_pred, [-1])
+
+    intersection = tf.reduce_sum(y_true_f * y_pred_f)
+    union = tf.reduce_sum(y_true_f) + tf.reduce_sum(y_pred_f)
 
     dice = (2. * intersection + smooth) / (union + smooth)
     return dice
@@ -291,12 +294,29 @@ def hybrid_loss(y_true, y_pred):
   focal = bce_focal_loss(y_true, y_pred)
   return dice + focal
 
-model.compile(optimizer = keras.optimizers.AdamW(learning_rate = 0.001, weight_decay = 0.004), loss = hybrid_loss, metrics = [dice_coef, 'accuracy'])
+model.compile(optimizer = keras.optimizers.AdamW(learning_rate = 0.0001, weight_decay = 0.01), loss = hybrid_loss, metrics = [dice_coef, 'accuracy'])
+
+# We create a log file for our model parameters for reproducibility and experiment tracking.
+
+hyper_params = {
+    "run_name": "pilot_run",
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "batch_size": 16,
+    "epochs": 100,
+    "patience": 20
+}
+
+df = pd.DataFrame([hyper_params])
+df.to_csv('/content/run_01_hyperparameters.csv', index = False)
 
 # We train the model, ensuring to stop training if the weights stop improving after a set number of epochs.
 
-early_stopper = EarlyStopping(patience = 15, monitor = 'val_loss', restore_best_weights = True)
-history = model.fit(X_train, y_train, epochs = 100, batch_size = 16, validation_data = (X_val, y_val), callbacks = [early_stopper])
+csv_logger = CSVLogger('training_log_run_1.csv', append = True)
+early_stopper = EarlyStopping(patience = 20, monitor = 'val_loss', restore_best_weights = True)
+model_checkpoint = ModelCheckpoint('/content/run_1.h5', monitor = 'val_loss', save_best_only = True)
+
+history = model.fit(X_train, y_train, epochs = 100, batch_size = 16, validation_data = (X_val, y_val), callbacks = [early_stopper, csv_logger, model_checkpoint])
 
 # We plot the training and validation loss to ensure there is no overfitting or underfitting, and no vanishing or exploding gradients.
 
@@ -320,3 +340,46 @@ plt.ylabel('Dice Score')
 plt.legend()
 
 plt.show()
+
+# We evaluate the model on the validation data
+# and calculate the DSC, Hausdorff distance and 95th percentile Hausdorff distance.
+# This tells us how good our model currently is, and gives us an idea of
+# how much improvement is required.
+
+y_pred_probs = model.predict(X_val)
+y_pred_bin = (y_pred_probs > 0.5).astype(int)
+y_val_bin = y_val.astype(int)
+
+global_dice = dc(y_pred_bin, y_val_bin)
+print(f"Global Validation DSC: {global_dice:.4f}")
+
+hd_list = []
+hd95_list = []
+slice_dice_list = []
+
+for i in range(len(y_val_bin)):
+    true_slice = y_val_bin[i]
+    pred_slice = y_pred_bin[i]
+
+    if np.sum(true_slice) == 0 and np.sum(pred_slice) == 0:
+        slice_dice_list.append(1.0)
+    else:
+        slice_dice_list.append(dc(pred_slice, true_slice))
+
+    if np.sum(true_slice) > 0 and np.sum(pred_slice) > 0:
+        try:
+            hd_val = hd(pred_slice, true_slice, voxelspacing=None)
+            hd95_val = hd95(pred_slice, true_slice, voxelspacing=None)
+
+            hd_list.append(hd_val)
+            hd95_list.append(hd95_val)
+        except Exception as e:
+            pass
+
+print(f"Average Slice-wise DSC: {np.mean(slice_dice_list):.4f}")
+
+if hd_list:
+    print(f"Average HD: {np.mean(hd_list):.2f} mm")
+    print(f"Average HD95: {np.mean(hd95_list):.2f} mm")
+else:
+    print("No matching positive slices found to calculate HD/HD95.")
