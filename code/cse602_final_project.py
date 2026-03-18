@@ -13,6 +13,7 @@ Original file is located at
 !pip install medpy # This is a special library for medical image processing and metric computation.
 
 import pandas as pd
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -103,6 +104,7 @@ for i in [10, 14, 15, 28, 62]:
   print(train_image.GetSize())
 
 # ...and for the binary image masks with brain lesions annotated by experts.
+
 for i in [10, 14, 15, 28, 62]:
   train_image = sitk.ReadImage(f"{train_dir}/3LABEL/MGHNICU_0{i}-VISIT_01_lesion.mha")
   train_array = sitk.GetArrayFromImage(train_image)
@@ -115,69 +117,114 @@ for i in [10, 14, 15, 28, 62]:
   plt.show()
   print(train_image.GetSize())
 
-file_path = '/content/atlases/lesion_atlases/readme.txt'
-
-with open(file_path, 'r') as file:
-  content = file.read()
-
-content
-
-norm_path= '/content/atlases/normal_atlases/readme_normal_atlases.txt'
-
-with open(norm_path, 'r') as file:
-  norm_content = file.read()
-
-norm_content
-
 """##2. Read in and Preprocess the Training and Validation Data
 
 In order to build a model that uses multimodal data, using the ADC and ZADC maps as two separate modalities, we need to stack the ADC and ZADC maps to obtain the final training and validation datasets.
 """
 
-# First, we define a helper function to load in and resize the data.
-# The EDA revealed that not all images have the same dimensions.
-# Thus, they all need to be converted to a single standard size for successful stacking.
+adc_dir = '/content/BONBID2023_Train/1ADC_ss'
+zadc_dir = '/content/BONBID2023_Train/2Z_ADC'
+mask_dir = '/content/BONBID2023_Train/3LABEL'
 
-def load_and_resize_images(directory_path, is_mask=False, target_shape=(23, 128, 128)):
-    image_list = []
-    filepaths = sorted(glob.glob(os.path.join(directory_path, '*.*')))
+all_adc_files = os.listdir(adc_dir)
+pids = []
 
-    for filepath in filepaths:
-        sitk_img = sitk.ReadImage(filepath)
-        img_array = sitk.GetArrayFromImage(sitk_img)
+for filename in all_adc_files:
+    if filename.startswith('MGHNICU_'):
+        pid = filename.split('-ADC')[0]
+        pids.append(pid)
 
-        if img_array.shape != target_shape:
-            if is_mask:
-                img_array = resize(img_array, target_shape, order=0, preserve_range=True, anti_aliasing=False)
-            else:
-                img_array = resize(img_array, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+pids = list(set(pids))
 
-        image_list.append(img_array)
+random.seed(42)
+random.shuffle(pids)
 
-    return np.concatenate(image_list, axis=0)
+train_idx = int(len(pids) * 0.85)
+train_pids = pids[:train_idx]
+test_pids = pids[train_idx:]
 
-# We use our helper function to load in and prepare the feature and target data...
+print(f"Total Patients: {len(pids)} | Train: {len(train_pids)} | Test: {len(test_pids)}")
 
-adc_train = load_and_resize_images('/content/BONBID2023_Train/1ADC_ss')
-zadc_train = load_and_resize_images('/content/BONBID2023_Train/2Z_ADC')
-y_train = load_and_resize_images('/content/BONBID2023_Train/3LABEL', is_mask = True)
+def split_train_and_test(pid_list, target_shape=(23, 128, 128)):
+    X_list = []
+    y_list = []
 
-X_train = np.stack((adc_train, zadc_train), axis = 1)
-X_train = np.transpose(X_train, (0, 2, 3, 1))
-y_train = np.expand_dims(y_train, axis = -1)
+    for pid in pid_list:
+        adc_path = os.path.join(adc_dir, f"{pid}-ADC_ss.mha")
+        zadc_path = os.path.join(zadc_dir, f"Zmap_{pid}-ADC_smooth2mm_clipped10.mha")
+        mask_path = os.path.join(mask_dir, f"{pid}_lesion.mha")
 
-# ...and we do the same for the validation data.
+        adc_arr = sitk.GetArrayFromImage(sitk.ReadImage(adc_path))
+        zadc_arr = sitk.GetArrayFromImage(sitk.ReadImage(zadc_path))
+        mask_arr = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
 
-adc_val = load_and_resize_images('/content/1ADC_ss')
-zadc_val = load_and_resize_images('/content/2Z_ADC')
-y_val = load_and_resize_images('/content/3LABEL', is_mask = True)
+        if adc_arr.shape != target_shape:
+            adc_arr = resize(adc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+            zadc_arr = resize(zadc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+            mask_arr = resize(mask_arr, target_shape, order=0, preserve_range=True, anti_aliasing=False)
 
-X_val = np.stack((adc_val, zadc_val), axis = 1)
-X_val = np.transpose(X_val, (0, 2, 3, 1))
-y_val = np.expand_dims(y_val, axis = -1)
+        patient_features = np.stack([adc_arr, zadc_arr], axis=-1)
+
+        X_list.append(patient_features)
+        y_list.append(mask_arr)
+
+    return np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
+
+X_train, y_train = split_train_and_test(train_pids)
+X_test, y_test = split_train_and_test(test_pids)
+
+y_train = np.expand_dims(y_train, axis=-1)
+y_test = np.expand_dims(y_test, axis=-1)
+
+# We now prepare to load in the validation data.
+
+val_adc_dir = '/content/1ADC_ss'
+val_zadc_dir = '/content/2Z_ADC'
+val_mask_dir = '/content/3LABEL'
+
+val_adc_files = os.listdir(val_adc_dir)
+val_pids = []
+for filename in val_adc_files:
+    if filename.startswith('MGHNICU_'):
+        pid = filename.split('-ADC')[0]
+        val_pids.append(pid)
+
+# We define a helper function to load in and resize the validation data.
+# A separate validation dataset is already available, and so does not need to be created from the training dataset.
+
+def load_val_data(pid_list, target_shape=(23, 128, 128)):
+    X_list = []
+    y_list = []
+
+    for pid in pid_list:
+        adc_path = os.path.join(val_adc_dir, f"{pid}-ADC_ss.mha")
+        zadc_path = os.path.join(val_zadc_dir, f"Zmap_{pid}-ADC_smooth2mm_clipped10.mha")
+        mask_path = os.path.join(val_mask_dir, f"{pid}_lesion.mha")
+
+        adc_arr = sitk.GetArrayFromImage(sitk.ReadImage(adc_path))
+        zadc_arr = sitk.GetArrayFromImage(sitk.ReadImage(zadc_path))
+        mask_arr = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
+
+        if adc_arr.shape != target_shape:
+            adc_arr = resize(adc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+            zadc_arr = resize(zadc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+            mask_arr = resize(mask_arr, target_shape, order=0, preserve_range=True, anti_aliasing=False)
+
+        patient_features = np.stack([adc_arr, zadc_arr], axis=-1)
+
+        X_list.append(patient_features)
+        y_list.append(mask_arr)
+
+    return np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
+
+X_val, y_val_raw = load_val_data(val_pids)
+y_val = np.expand_dims(y_val_raw, axis=-1)
 
 print(X_train.shape)
 print(y_train.shape)
+
+print(X_test.shape)
+print(y_test.shape)
 
 print(X_val.shape)
 print(y_val.shape)
@@ -299,7 +346,7 @@ model.compile(optimizer = keras.optimizers.AdamW(learning_rate = 0.0001, weight_
 # We create a log file for our model parameters for reproducibility and experiment tracking.
 
 hyper_params = {
-    "run_name": "pilot_run",
+    "run_name": "run_02",
     "learning_rate": 0.0001,
     "weight_decay": 0.01,
     "batch_size": 16,
@@ -308,13 +355,13 @@ hyper_params = {
 }
 
 df = pd.DataFrame([hyper_params])
-df.to_csv('/content/run_01_hyperparameters.csv', index = False)
+df.to_csv('/content/run_02_hyperparameters.csv', index = False)
 
 # We train the model, ensuring to stop training if the weights stop improving after a set number of epochs.
 
-csv_logger = CSVLogger('training_log_run_1.csv', append = True)
+csv_logger = CSVLogger('training_log_run_2.csv', append = True)
 early_stopper = EarlyStopping(patience = 20, monitor = 'val_loss', restore_best_weights = True)
-model_checkpoint = ModelCheckpoint('/content/run_1.h5', monitor = 'val_loss', save_best_only = True)
+model_checkpoint = ModelCheckpoint('/content/run_2.keras', monitor = 'val_loss', save_best_only = True)
 
 history = model.fit(X_train, y_train, epochs = 100, batch_size = 16, validation_data = (X_val, y_val), callbacks = [early_stopper, csv_logger, model_checkpoint])
 
