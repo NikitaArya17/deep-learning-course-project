@@ -26,8 +26,10 @@ import SimpleITK as sitk
 import tensorflow as tf
 from tensorflow import keras
 import medpy
+import cv2
 from medpy.metric.binary import hd, hd95, dc
 from keras import layers, Model
+from keras.utils import Sequence
 from keras.callbacks import EarlyStopping, CSVLogger, ModelCheckpoint
 
 """# 1. Download and Load the Training, Test and Validation Datasets
@@ -357,13 +359,65 @@ hyper_params = {
 df = pd.DataFrame([hyper_params])
 df.to_csv('/content/run_02_hyperparameters.csv', index = False)
 
+# We define a few augmentations we will apply to the training data to help the model learn better.
+# We will flip the images horizontally (not vertically, as this is not standard brain anatomy!).
+# We will also rotate the image slightly from the vertical axis by about 5-10 degrees. This simulates slight variations in the angle
+# at which the infant's head may have been placed in the MRI machine.
+# We will also introduce some Gaussian noise into some images to imitate the technical noise that often results
+# from standard MRI machines.
+
+data_augs = A.Compose([
+    A.HorizontalFlip(p = 0.5),
+    A.Rotate(limit = 10, p = 0.5, border_mode = cv2.BORDER_CONSTANT, fill = 0),
+    A.GaussNoise(std_range = (0.001, 0.01) ,p = 0.3)
+])
+
+# We define a custom data generator class that inherits from the Sequence class of keras.utils.
+# This selects batches of 16 images from the training data and ensures that the same augmentation is applied to the ADC map as well
+# as the binary mask for a single patient.
+
+class MedicalDataGenerator(Sequence):
+    def __init__(self, X, y, batch_size=16, augmentations=None, shuffle=True):
+        self.X = X
+        self.y = y
+        self.batch_size = batch_size
+        self.augmentations = augmentations
+        self.shuffle = shuffle
+        self.indices = np.arange(len(self.X))
+        self.on_epoch_end()
+
+    def __len__(self):
+        return int(np.ceil(len(self.X) / self.batch_size))
+
+    def __getitem__(self, index):
+        start_idx = index * self.batch_size
+        end_idx = (index + 1) * self.batch_size
+        batch_indices = self.indices[start_idx:end_idx]
+
+        X_batch = self.X[batch_indices].copy()
+        y_batch = self.y[batch_indices].copy()
+
+        if self.augmentations is not None:
+            for i in range(len(X_batch)):
+                augmented = self.augmentations(image=X_batch[i], mask=y_batch[i])
+                X_batch[i] = augmented['image']
+                y_batch[i] = augmented['mask']
+
+        return X_batch, y_batch
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
 # We train the model, ensuring to stop training if the weights stop improving after a set number of epochs.
+# We ensure that the training data is augmented before the model trains on it.
 
 csv_logger = CSVLogger('training_log_run_2.csv', append = True)
 early_stopper = EarlyStopping(patience = 20, monitor = 'val_loss', restore_best_weights = True)
 model_checkpoint = ModelCheckpoint('/content/run_2.keras', monitor = 'val_loss', save_best_only = True)
 
-history = model.fit(X_train, y_train, epochs = 100, batch_size = 16, validation_data = (X_val, y_val), callbacks = [early_stopper, csv_logger, model_checkpoint])
+train_gen = MedicalDataGenerator(X_train, y_train, batch_size = 16, augmentations = data_augs)
+history = model.fit(train_gen, epochs = 100, batch_size = 16, validation_data = (X_val, y_val), callbacks = [early_stopper, csv_logger, model_checkpoint])
 
 # We plot the training and validation loss to ensure there is no overfitting or underfitting, and no vanishing or exploding gradients.
 
@@ -428,5 +482,7 @@ print(f"Average Slice-wise DSC: {np.mean(slice_dice_list):.4f}")
 if hd_list:
     print(f"Average HD: {np.mean(hd_list):.2f} mm")
     print(f"Average HD95: {np.mean(hd95_list):.2f} mm")
+    run_02_metrics = pd.DataFrame({'Global_Validation_DSC': [global_dice], 'Average_Slice-Wise_DSC': [np.mean(slice_dice_list)], 'Average_HD_in_mm': [np.mean(hd_list)], 'Average_HD95_in_mm': [np.mean(hd95_list)]})
+    run_02_metrics.to_csv('/content/run_02_performance.csv', index = False)
 else:
     print("No matching positive slices found to calculate HD/HD95.")
