@@ -1,0 +1,2 @@
+run_name,loss_function,alpha,beta,gamma,learning_rate,weight_decay,batch_size,epochs,patience
+run_03,focal_tversky_loss,0.3,0.7,0.75,0.0001,0.01,16,100,25
