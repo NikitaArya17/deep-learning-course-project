@@ -32,6 +32,11 @@ from keras import layers, Model
 from keras.utils import Sequence
 from keras.callbacks import EarlyStopping, CSVLogger, ModelCheckpoint
 
+# Define the results directory
+
+results_dir = '/content/drive/MyDrive/CSE602_Project_Results'
+run_num = 4
+
 """# 1. Download and Load the Training, Test and Validation Datasets
 
 Data source: [BOston Neonatal Brain Injury Data](https://zenodo.org/records/10602767)
@@ -75,7 +80,6 @@ drive.mount('/content/drive')
 #!unzip -q /content/drive/MyDrive/CSE602_Project_Data/test_data.zip
 
 #Some basic EDA; we read in and visualise the first five raw ADC maps to get a glimpse of the data we'll be dealing with.
-
 
 train_dir = '/content/BONBID2023_Train'
 
@@ -152,20 +156,20 @@ def split_train_and_test(pid_list, target_shape=(23, 128, 128)):
     y_list = []
 
     for pid in pid_list:
-        adc_path = os.path.join(adc_dir, f"{pid}-ADC_ss.mha")
-        zadc_path = os.path.join(zadc_dir, f"Zmap_{pid}-ADC_smooth2mm_clipped10.mha")
-        mask_path = os.path.join(mask_dir, f"{pid}_lesion.mha")
+        adc_path = os.path.join(adc_dir, f'{pid}-ADC_ss.mha')
+        zadc_path = os.path.join(zadc_dir, f'Zmap_{pid}-ADC_smooth2mm_clipped10.mha')
+        mask_path = os.path.join(mask_dir, f'{pid}_lesion.mha')
 
         adc_arr = sitk.GetArrayFromImage(sitk.ReadImage(adc_path))
         zadc_arr = sitk.GetArrayFromImage(sitk.ReadImage(zadc_path))
         mask_arr = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
 
         if adc_arr.shape != target_shape:
-            adc_arr = resize(adc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
-            zadc_arr = resize(zadc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
-            mask_arr = resize(mask_arr, target_shape, order=0, preserve_range=True, anti_aliasing=False)
+            adc_arr = resize(adc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
+            zadc_arr = resize(zadc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
+            mask_arr = resize(mask_arr, target_shape, order = 0, preserve_range = True, anti_aliasing = False)
 
-        patient_features = np.stack([adc_arr, zadc_arr], axis=-1)
+        patient_features = np.stack([adc_arr, zadc_arr], axis = -1)
 
         X_list.append(patient_features)
         y_list.append(mask_arr)
@@ -199,28 +203,28 @@ def load_val_data(pid_list, target_shape=(23, 128, 128)):
     y_list = []
 
     for pid in pid_list:
-        adc_path = os.path.join(val_adc_dir, f"{pid}-ADC_ss.mha")
-        zadc_path = os.path.join(val_zadc_dir, f"Zmap_{pid}-ADC_smooth2mm_clipped10.mha")
-        mask_path = os.path.join(val_mask_dir, f"{pid}_lesion.mha")
+        adc_path = os.path.join(val_adc_dir, f'{pid}-ADC_ss.mha')
+        zadc_path = os.path.join(val_zadc_dir, f'Zmap_{pid}-ADC_smooth2mm_clipped10.mha')
+        mask_path = os.path.join(val_mask_dir, f'{pid}_lesion.mha')
 
         adc_arr = sitk.GetArrayFromImage(sitk.ReadImage(adc_path))
         zadc_arr = sitk.GetArrayFromImage(sitk.ReadImage(zadc_path))
         mask_arr = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
 
         if adc_arr.shape != target_shape:
-            adc_arr = resize(adc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
-            zadc_arr = resize(zadc_arr, target_shape, order=1, preserve_range=True, anti_aliasing=True)
-            mask_arr = resize(mask_arr, target_shape, order=0, preserve_range=True, anti_aliasing=False)
+            adc_arr = resize(adc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
+            zadc_arr = resize(zadc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
+            mask_arr = resize(mask_arr, target_shape, order = 0, preserve_range = True, anti_aliasing = False)
 
-        patient_features = np.stack([adc_arr, zadc_arr], axis=-1)
+        patient_features = np.stack([adc_arr, zadc_arr], axis = -1)
 
         X_list.append(patient_features)
         y_list.append(mask_arr)
 
-    return np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
+    return np.concatenate(X_list, axis = 0), np.concatenate(y_list, axis = 0)
 
 X_val, y_val_raw = load_val_data(val_pids)
-y_val = np.expand_dims(y_val_raw, axis=-1)
+y_val = np.expand_dims(y_val_raw, axis = -1)
 
 print(X_train.shape)
 print(y_train.shape)
@@ -242,7 +246,7 @@ This architecture has been chosen as it has achieved a Dice score of 0.8153 whil
 The detailed rationale for this choice of architecture may be found in the explanatory project idea presentation which has been uploaded to this repository.
 
 
-The following model architecture is a baseline architecture to implement this model. Parameters will be edited according to the model's performance on initial runs.
+The following model architecture is a baseline architecture to implement this model. The model is under active development and parameters are being edited based on the model's performance on successive training and validation cycles.
 """
 
 def transformer_block(x, num_heads = 4, key_dim = 128, mlp_dim = 256, dropout = 0.1):
@@ -318,7 +322,9 @@ def build_2_5d_transunet(input_shape=(128, 128, 2), num_classes = 1):
 model = build_2_5d_transunet()
 model.summary()
 
-# We need to define a helper function to calculate the Dice coefficient as Keras does not provide this as a built-in metric.
+# We need to define a helper function to calculate the Dice coefficient
+# as an evaluation metric.
+
 def dice_coef(y_true, y_pred, smooth=1):
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred, tf.float32)
@@ -332,6 +338,8 @@ def dice_coef(y_true, y_pred, smooth=1):
     dice = (2. * intersection + smooth) / (union + smooth)
     return dice
 
+"""Sørensen-Dice Coefficient: [Evaluating White Matter Lesion Segmentations with Refined Sørensen-Dice Analysis](https://www.nature.com/articles/s41598-020-64803-w)"""
+
 # We also require a hybrid loss function to account for class imbalance in the training set.
 # This helper function combines the Dice Loss and Focal Loss.
 
@@ -343,21 +351,52 @@ def hybrid_loss(y_true, y_pred):
   focal = bce_focal_loss(y_true, y_pred)
   return dice + focal
 
-model.compile(optimizer = keras.optimizers.AdamW(learning_rate = 0.0001, weight_decay = 0.01), loss = hybrid_loss, metrics = [dice_coef, 'accuracy'])
+"""Hybrid Dice Loss: [Minimizing Hybrid Dice Loss for Highly Imbalanced 3D Neuroimage Segmentation](https://ieeexplore.ieee.org/document/9176663)"""
+
+# We define an alternate loss function for the Focal Tversky Loss.
+# This penalises the model more aggressively for missing smaller, more irregularly shaped, scattered lesions.
+# Hopefully, this loss function should help the model improve at capturing local context in addition to global.
+
+def focal_tversky_loss(y_true, y_pred):
+    alpha = 0.5
+    beta = 0.5
+    gamma = 0.75
+
+    y_true_f = tf.cast(tf.reshape(y_true, [-1]), tf.float32)
+    y_pred_f = tf.cast(tf.reshape(y_pred, [-1]), tf.float32)
+
+    TP = tf.reduce_sum(y_true_f * y_pred_f)
+    FP = tf.reduce_sum((1.0 - y_true_f) * y_pred_f)
+    FN = tf.reduce_sum(y_true_f * (1.0 - y_pred_f))
+
+    epsilon = 1e-6
+    tversky_index = (TP + epsilon) / (TP + alpha * FP + beta * FN + epsilon)
+
+    return tf.math.pow((1.0 - tversky_index), gamma)
+
+"""Focal Tversky Loss: [Adaptive Region-Specific Loss for Improved Medical Image Segmentation](https://pmc.ncbi.nlm.nih.gov/articles/PMC11346301/#:~:text=2.2.&text=Recently%2C%20researchers%20have%20proposed%20more,%2Dbased%20auto%2Dsegmentation%20algorithms.)"""
+
+model.compile(optimizer = keras.optimizers.AdamW(learning_rate = 0.0001, weight_decay = 0.01), loss = focal_tversky_loss, metrics = [dice_coef, 'accuracy'])
+
+"""AdamW Optimizer: [Semi-Supervised Learning in Medical MRI Segmentation: Brain Tissue with White Matter Hyperintensity Segmentation Using FLAIR MRI](https://pmc.ncbi.nlm.nih.gov/articles/PMC8228966/#:~:text=The%20size%20of%20the%20cropped,0.001%20and%20weight%20decay%20=%200.01.)"""
 
 # We create a log file for our model parameters for reproducibility and experiment tracking.
 
 hyper_params = {
-    "run_name": "run_02",
-    "learning_rate": 0.0001,
-    "weight_decay": 0.01,
-    "batch_size": 16,
-    "epochs": 100,
-    "patience": 20
+    'run_name': f'run_0{run_num}',
+    'loss_function': 'focal_tversky_loss',
+    'alpha': 0.5,
+    'beta': 0.5,
+    'gamma': 0.75,
+    'learning_rate': 0.0001,
+    'weight_decay': 0.01,
+    'batch_size': 16,
+    'epochs': 100,
+    'patience': 25
 }
 
 df = pd.DataFrame([hyper_params])
-df.to_csv('/content/run_02_hyperparameters.csv', index = False)
+df.to_csv(f'{results_dir}/run_0{run_num}_hyperparameters.csv', index = False)
 
 # We define a few augmentations we will apply to the training data to help the model learn better.
 # We will flip the images horizontally (not vertically, as this is not standard brain anatomy!).
@@ -412,9 +451,9 @@ class MedicalDataGenerator(Sequence):
 # We train the model, ensuring to stop training if the weights stop improving after a set number of epochs.
 # We ensure that the training data is augmented before the model trains on it.
 
-csv_logger = CSVLogger('training_log_run_2.csv', append = True)
-early_stopper = EarlyStopping(patience = 20, monitor = 'val_loss', restore_best_weights = True)
-model_checkpoint = ModelCheckpoint('/content/run_2.keras', monitor = 'val_loss', save_best_only = True)
+csv_logger = CSVLogger(f'{results_dir}/training_log_run_{run_num}.csv', append = True)
+early_stopper = EarlyStopping(patience = 25, monitor = 'val_loss', restore_best_weights = True)
+model_checkpoint = ModelCheckpoint(f'{results_dir}/run_{run_num}.keras', monitor = 'val_loss', save_best_only = True)
 
 train_gen = MedicalDataGenerator(X_train, y_train, batch_size = 16, augmentations = data_augs)
 history = model.fit(train_gen, epochs = 100, batch_size = 16, validation_data = (X_val, y_val), callbacks = [early_stopper, csv_logger, model_checkpoint])
@@ -452,7 +491,7 @@ y_pred_bin = (y_pred_probs > 0.5).astype(int)
 y_val_bin = y_val.astype(int)
 
 global_dice = dc(y_pred_bin, y_val_bin)
-print(f"Global Validation DSC: {global_dice:.4f}")
+print(f'Global Validation DSC: {global_dice:.4f}')
 
 hd_list = []
 hd95_list = []
@@ -469,20 +508,91 @@ for i in range(len(y_val_bin)):
 
     if np.sum(true_slice) > 0 and np.sum(pred_slice) > 0:
         try:
-            hd_val = hd(pred_slice, true_slice, voxelspacing=None)
-            hd95_val = hd95(pred_slice, true_slice, voxelspacing=None)
+            hd_val = hd(pred_slice, true_slice, voxelspacing = None)
+            hd95_val = hd95(pred_slice, true_slice, voxelspacing = None)
 
             hd_list.append(hd_val)
             hd95_list.append(hd95_val)
         except Exception as e:
             pass
 
-print(f"Average Slice-wise DSC: {np.mean(slice_dice_list):.4f}")
+print(f'Average Slice-wise DSC: {np.mean(slice_dice_list):.4f}')
 
 if hd_list:
-    print(f"Average HD: {np.mean(hd_list):.2f} mm")
-    print(f"Average HD95: {np.mean(hd95_list):.2f} mm")
-    run_02_metrics = pd.DataFrame({'Global_Validation_DSC': [global_dice], 'Average_Slice-Wise_DSC': [np.mean(slice_dice_list)], 'Average_HD_in_mm': [np.mean(hd_list)], 'Average_HD95_in_mm': [np.mean(hd95_list)]})
-    run_02_metrics.to_csv('/content/run_02_performance.csv', index = False)
+    print(f'Average HD: {np.mean(hd_list):.2f} mm')
+    print(f'Average HD95: {np.mean(hd95_list):.2f} mm')
+    run_metrics = pd.DataFrame({'Global_Validation_DSC': [global_dice], 'Average_Slice-Wise_DSC': [np.mean(slice_dice_list)], 'Average_HD_in_mm': [np.mean(hd_list)], 'Average_HD95_in_mm': [np.mean(hd95_list)]})
+    run_metrics.to_csv(f'{results_dir}/run_0{run_num}_performance.csv', index = False)
 else:
-    print("No matching positive slices found to calculate HD/HD95.")
+    print('No matching positive slices found to calculate HD or HD95.')
+
+# We also visualise the predicted binary masks to compare them with the ground truth.
+# This allows us to visualise the model's performance at the task at hand, which performance metrics alone
+# may not always capture completely.
+
+y_pred_probs = model.predict(X_val)
+y_pred_bin = (y_pred_probs > 0.5).astype(int)
+
+positive_lesion_indices = [i for i in range(len(y_val)) if np.sum(y_val[i]) > 0]
+sample_indices = random.sample(positive_lesion_indices, 3)
+
+fig, axes = plt.subplots(3, 3, figsize=(12, 12))
+
+for i, idx in enumerate(sample_indices):
+    mri_slice = X_val[idx, :, :, 0]
+    true_mask = y_val[idx, :, :, 0]
+    pred_mask = y_pred_bin[idx, :, :, 0]
+
+    axes[i, 0].imshow(mri_slice, cmap = 'gray')
+    axes[i, 0].set_title(f'Slice {idx}: ADC MRI')
+    axes[i, 0].axis('off')
+
+    axes[i, 1].imshow(true_mask, cmap = 'hot')
+    axes[i, 1].set_title(f'Ground Truth Annotation')
+    axes[i, 1].axis('off')
+
+    axes[i, 2].imshow(pred_mask, cmap = 'hot')
+    axes[i, 2].set_title(f'Model Prediction')
+    axes[i, 2].axis('off')
+
+plt.tight_layout()
+plt.show()
+
+# The following raw continuous probability heatmaps have been plotted to visualise the model's prediction confidence.
+# We use these to determine if the model has reached its architectural limits, given the current hardware and data constraints.
+
+y_pred_probs = model.predict(X_val)
+y_pred_bin = (y_pred_probs > 0.5).astype(int)
+
+positive_lesion_indices = [i for i in range(len(y_val)) if np.sum(y_val[i]) > 0]
+
+sample_indices = random.sample(positive_lesion_indices, 3)
+
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+
+for i, idx in enumerate(sample_indices):
+    mri_slice = X_val[idx, :, :, 0]
+    true_mask = y_val[idx, :, :, 0]
+    pred_bin = y_pred_bin[idx, :, :, 0]
+    pred_prob = y_pred_probs[idx, :, :, 0]
+
+    axes[i, 0].imshow(mri_slice, cmap='gray')
+    axes[i, 0].set_title(f"Slice {idx}: ADC MRI")
+    axes[i, 0].axis('off')
+
+    axes[i, 1].imshow(true_mask, cmap='hot')
+    axes[i, 1].set_title("True Annotation")
+    axes[i, 1].axis('off')
+
+    axes[i, 2].imshow(pred_bin, cmap='hot')
+    axes[i, 2].set_title("Binary Pred (> 0.5)")
+    axes[i, 2].axis('off')
+
+    im = axes[i, 3].imshow(pred_prob, cmap='inferno', vmin=0, vmax=1)
+    axes[i, 3].set_title("Raw Probability Heatmap")
+    axes[i, 3].axis('off')
+
+    fig.colorbar(im, ax=axes[i, 3], fraction=0.046, pad=0.04)
+
+plt.tight_layout()
+plt.show()
