@@ -35,7 +35,7 @@ from keras.callbacks import EarlyStopping, CSVLogger, ModelCheckpoint
 # Define the results directory
 
 results_dir = '/content/drive/MyDrive/CSE602_Project_Results'
-run_num = 4
+run_num = 8
 
 """# 1. Download and Load the Training, Test and Validation Datasets
 
@@ -76,8 +76,7 @@ drive.mount('/content/drive')
 
 !unzip -q /content/drive/MyDrive/CSE602_Project_Data/train_data.zip
 !unzip -q /content/drive/MyDrive/CSE602_Project_Data/val_data.zip
-#!tar -xvf /content/drive/MyDrive/CSE602_Project_Data/atlases.tar.gz
-#!unzip -q /content/drive/MyDrive/CSE602_Project_Data/test_data.zip
+!unzip -q -P 'i3labhie2023' /content/drive/MyDrive/CSE602_Project_Data/test_data.zip
 
 #Some basic EDA; we read in and visualise the first five raw ADC maps to get a glimpse of the data we'll be dealing with.
 
@@ -125,106 +124,56 @@ for i in [10, 14, 15, 28, 62]:
 
 """##2. Read in and Preprocess the Training and Validation Data
 
-In order to build a model that uses multimodal data, using the ADC and ZADC maps as two separate modalities, we need to stack the ADC and ZADC maps to obtain the final training and validation datasets.
+In order to build a model that uses multimodal data, using the ADC and ZADC maps as two separate modalities, we need to stack the ADC and ZADC maps to obtain the final training, test and validation datasets.
 """
 
-adc_dir = '/content/BONBID2023_Train/1ADC_ss'
-zadc_dir = '/content/BONBID2023_Train/2Z_ADC'
-mask_dir = '/content/BONBID2023_Train/3LABEL'
+# We define a helper function to load in, resize and stack the data.
 
-all_adc_files = os.listdir(adc_dir)
-pids = []
+def load_and_resize_images(directory_path, is_mask=False, target_shape=(23, 128, 128)):
+    image_list = []
+    filepaths = sorted(glob.glob(os.path.join(directory_path, '*.*')))
 
-for filename in all_adc_files:
-    if filename.startswith('MGHNICU_'):
-        pid = filename.split('-ADC')[0]
-        pids.append(pid)
+    for filepath in filepaths:
+        sitk_img = sitk.ReadImage(filepath)
+        img_array = sitk.GetArrayFromImage(sitk_img)
 
-pids = list(set(pids))
+        if img_array.shape != target_shape:
+            if is_mask:
+                img_array = resize(img_array, target_shape,
+                                   order=0, preserve_range=True, anti_aliasing=False)
+            else:
+                img_array = resize(img_array, target_shape,
+                                   order=1, preserve_range=True, anti_aliasing=True)
 
-random.seed(42)
-random.shuffle(pids)
+        image_list.append(img_array)
 
-train_idx = int(len(pids) * 0.85)
-train_pids = pids[:train_idx]
-test_pids = pids[train_idx:]
+    return np.concatenate(image_list, axis=0)
 
-print(f"Total Patients: {len(pids)} | Train: {len(train_pids)} | Test: {len(test_pids)}")
+# We use our helper function to load in and prepare the training, test and validation datasets.
 
-def split_train_and_test(pid_list, target_shape=(23, 128, 128)):
-    X_list = []
-    y_list = []
+adc_train = load_and_resize_images('/content/BONBID2023_Train/1ADC_ss/', is_mask=False)
+zadc_train = load_and_resize_images('/content/BONBID2023_Train/2Z_ADC/', is_mask=False)
 
-    for pid in pid_list:
-        adc_path = os.path.join(adc_dir, f'{pid}-ADC_ss.mha')
-        zadc_path = os.path.join(zadc_dir, f'Zmap_{pid}-ADC_smooth2mm_clipped10.mha')
-        mask_path = os.path.join(mask_dir, f'{pid}_lesion.mha')
+y_train = load_and_resize_images('/content/BONBID2023_Train/3LABEL/', is_mask=True)
 
-        adc_arr = sitk.GetArrayFromImage(sitk.ReadImage(adc_path))
-        zadc_arr = sitk.GetArrayFromImage(sitk.ReadImage(zadc_path))
-        mask_arr = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
-
-        if adc_arr.shape != target_shape:
-            adc_arr = resize(adc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
-            zadc_arr = resize(zadc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
-            mask_arr = resize(mask_arr, target_shape, order = 0, preserve_range = True, anti_aliasing = False)
-
-        patient_features = np.stack([adc_arr, zadc_arr], axis = -1)
-
-        X_list.append(patient_features)
-        y_list.append(mask_arr)
-
-    return np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
-
-X_train, y_train = split_train_and_test(train_pids)
-X_test, y_test = split_train_and_test(test_pids)
-
+X_train = np.stack((adc_train, zadc_train), axis=-1)
 y_train = np.expand_dims(y_train, axis=-1)
+
+adc_test = load_and_resize_images('/content/BONBID2023_Test/1ADC_ss/', is_mask=False)
+zadc_test = load_and_resize_images('/content/BONBID2023_Test/2Z_ADC/', is_mask=False)
+
+y_test = load_and_resize_images('/content/BONBID2023_Test/3LABEL/', is_mask=True)
+
+X_test = np.stack((adc_test, zadc_test), axis=-1)
 y_test = np.expand_dims(y_test, axis=-1)
 
-# We now prepare to load in the validation data.
+adc_val = load_and_resize_images('/content/1ADC_ss/', is_mask=False)
+zadc_val = load_and_resize_images('/content/2Z_ADC/', is_mask=False)
 
-val_adc_dir = '/content/1ADC_ss'
-val_zadc_dir = '/content/2Z_ADC'
-val_mask_dir = '/content/3LABEL'
+y_val = load_and_resize_images('/content/3LABEL/', is_mask=True)
 
-val_adc_files = os.listdir(val_adc_dir)
-val_pids = []
-for filename in val_adc_files:
-    if filename.startswith('MGHNICU_'):
-        pid = filename.split('-ADC')[0]
-        val_pids.append(pid)
-
-# We define a helper function to load in and resize the validation data.
-# A separate validation dataset is already available, and so does not need to be created from the training dataset.
-
-def load_val_data(pid_list, target_shape=(23, 128, 128)):
-    X_list = []
-    y_list = []
-
-    for pid in pid_list:
-        adc_path = os.path.join(val_adc_dir, f'{pid}-ADC_ss.mha')
-        zadc_path = os.path.join(val_zadc_dir, f'Zmap_{pid}-ADC_smooth2mm_clipped10.mha')
-        mask_path = os.path.join(val_mask_dir, f'{pid}_lesion.mha')
-
-        adc_arr = sitk.GetArrayFromImage(sitk.ReadImage(adc_path))
-        zadc_arr = sitk.GetArrayFromImage(sitk.ReadImage(zadc_path))
-        mask_arr = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
-
-        if adc_arr.shape != target_shape:
-            adc_arr = resize(adc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
-            zadc_arr = resize(zadc_arr, target_shape, order = 1, preserve_range = True, anti_aliasing = True)
-            mask_arr = resize(mask_arr, target_shape, order = 0, preserve_range = True, anti_aliasing = False)
-
-        patient_features = np.stack([adc_arr, zadc_arr], axis = -1)
-
-        X_list.append(patient_features)
-        y_list.append(mask_arr)
-
-    return np.concatenate(X_list, axis = 0), np.concatenate(y_list, axis = 0)
-
-X_val, y_val_raw = load_val_data(val_pids)
-y_val = np.expand_dims(y_val_raw, axis = -1)
+X_val = np.stack((adc_val, zadc_val), axis=-1)
+y_val = np.expand_dims(y_val, axis=-1)
 
 print(X_train.shape)
 print(y_train.shape)
@@ -360,7 +309,7 @@ def hybrid_loss(y_true, y_pred):
 def focal_tversky_loss(y_true, y_pred):
     alpha = 0.5
     beta = 0.5
-    gamma = 0.75
+    gamma = 0.8
 
     y_true_f = tf.cast(tf.reshape(y_true, [-1]), tf.float32)
     y_pred_f = tf.cast(tf.reshape(y_pred, [-1]), tf.float32)
@@ -387,7 +336,7 @@ hyper_params = {
     'loss_function': 'focal_tversky_loss',
     'alpha': 0.5,
     'beta': 0.5,
-    'gamma': 0.75,
+    'gamma': 0.8,
     'learning_rate': 0.0001,
     'weight_decay': 0.01,
     'batch_size': 16,
@@ -530,9 +479,6 @@ else:
 # This allows us to visualise the model's performance at the task at hand, which performance metrics alone
 # may not always capture completely.
 
-y_pred_probs = model.predict(X_val)
-y_pred_bin = (y_pred_probs > 0.5).astype(int)
-
 positive_lesion_indices = [i for i in range(len(y_val)) if np.sum(y_val[i]) > 0]
 sample_indices = random.sample(positive_lesion_indices, 3)
 
@@ -558,11 +504,8 @@ for i, idx in enumerate(sample_indices):
 plt.tight_layout()
 plt.show()
 
-# The following raw continuous probability heatmaps have been plotted to visualise the model's prediction confidence.
+# The following raw continuous probability heatmaps have been plotted to visualise the model's pixel-wise prediction confidence.
 # We use these to determine if the model has reached its architectural limits, given the current hardware and data constraints.
-
-y_pred_probs = model.predict(X_val)
-y_pred_bin = (y_pred_probs > 0.5).astype(int)
 
 positive_lesion_indices = [i for i in range(len(y_val)) if np.sum(y_val[i]) > 0]
 
@@ -593,6 +536,150 @@ for i, idx in enumerate(sample_indices):
     axes[i, 3].axis('off')
 
     fig.colorbar(im, ax=axes[i, 3], fraction=0.046, pad=0.04)
+
+plt.tight_layout()
+plt.show()
+
+# The moment of truth. Having perfected our model as much as possible, we now bring out the final testing set.
+
+final_model = keras.models.load_model(f'{results_dir}/run_8.keras', compile = False)
+
+test_pred_probs = final_model.predict(X_test)
+test_pred_bin = (test_pred_probs > 0.5).astype(np.float32)
+y_test_f = y_test.astype(np.float32)
+
+intersection_test = np.sum(y_test_f * test_pred_bin)
+global_dsc_test = (2.0 * intersection_test) / (np.sum(y_test_f) + np.sum(test_pred_bin) + 1e-6)
+
+hd_list_test = []
+hd95_list_test = []
+slice_dice_list_test = []
+
+for i in range(len(test_pred_bin)):
+    true_slice_test = y_test_f[i]
+    pred_slice_test = test_pred_bin[i]
+
+    if np.sum(true_slice_test) == 0 and np.sum(pred_slice_test) == 0:
+        slice_dice_list_test.append(1.0)
+    else:
+        slice_dice_list_test.append(dc(pred_slice_test, true_slice_test))
+
+    if np.sum(true_slice_test) > 0 and np.sum(pred_slice_test) > 0:
+        try:
+            hd_test = hd(pred_slice_test, true_slice_test, voxelspacing = None)
+            hd95_test = hd95(pred_slice_test, true_slice_test, voxelspacing = None)
+
+            hd_list_test.append(hd_test)
+            hd95_list_test.append(hd95_test)
+        except Exception as e:
+            pass
+
+print(f"Global Test DSC: {global_dsc_test:.4f}")
+print(f'Average Slice-wise DSC: {np.mean(slice_dice_list_test):.4f}')
+
+if hd_list_test:
+    print(f'Average HD: {np.mean(hd_list_test):.2f} mm')
+    print(f'Average HD95: {np.mean(hd95_list_test):.2f} mm')
+
+    run_metrics_test = pd.DataFrame({
+        'Global_Test_DSC': [global_dsc_test],
+        'Average_Slice-Wise_DSC': [np.mean(slice_dice_list_test)],
+        'Average_HD_in_mm': [np.mean(hd_list_test)],
+        'Average_HD95_in_mm': [np.mean(hd95_list_test)]
+    })
+    run_metrics_test.to_csv(f'{results_dir}/Final_Test_Performance.csv', index = False)
+    print(f"\nMetrics successfully saved to {results_dir}/Final_Test_Performance.csv")
+else:
+    print('No matching positive slices found to calculate HD or HD95.')
+
+# As we had done for the validation dataset, we plot the predicted binary masks as a visual comparison...
+
+positive_lesion_indices = [i for i in range(len(y_test)) if np.sum(y_test[i]) > 0]
+sample_indices = random.sample(positive_lesion_indices, 3)
+
+fig, axes = plt.subplots(3, 3, figsize=(12, 12))
+
+for i, idx in enumerate(sample_indices):
+    mri_slice = X_test[idx, :, :, 0]
+    true_mask = y_test[idx, :, :, 0]
+    pred_mask = test_pred_bin[idx, :, :, 0]
+
+    axes[i, 0].imshow(mri_slice, cmap = 'gray')
+    axes[i, 0].set_title(f'Slice {idx}: ADC MRI')
+    axes[i, 0].axis('off')
+
+    axes[i, 1].imshow(true_mask, cmap = 'hot')
+    axes[i, 1].set_title(f'Ground Truth Annotation')
+    axes[i, 1].axis('off')
+
+    axes[i, 2].imshow(pred_mask, cmap = 'hot')
+    axes[i, 2].set_title(f'Final Model Prediction')
+    axes[i, 2].axis('off')
+
+plt.tight_layout()
+plt.show()
+
+#...along with the continuous probability heatmaps, as a visual representation of the model's confidence
+# across the brain tissue.
+
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+
+for i, idx in enumerate(sample_indices):
+    mri_slice = X_test[idx, :, :, 0]
+    true_mask = y_test[idx, :, :, 0]
+    pred_bin = test_pred_bin[idx, :, :, 0]
+    pred_prob = test_pred_probs[idx, :, :, 0]
+
+    axes[i, 0].imshow(mri_slice, cmap = 'gray')
+    axes[i, 0].set_title(f"Slice {idx}: ADC MRI")
+    axes[i, 0].axis('off')
+
+    axes[i, 1].imshow(true_mask, cmap = 'hot')
+    axes[i, 1].set_title("True Annotation")
+    axes[i, 1].axis('off')
+
+    axes[i, 2].imshow(pred_bin, cmap='hot')
+    axes[i, 2].set_title("Binary Pred (> 0.5)")
+    axes[i, 2].axis('off')
+
+    im = axes[i, 3].imshow(pred_prob, cmap='inferno', vmin=0, vmax=1)
+    axes[i, 3].set_title("Final Test Probability Heatmap")
+    axes[i, 3].axis('off')
+
+    fig.colorbar(im, ax=axes[i, 3], fraction=0.046, pad=0.04)
+
+plt.tight_layout()
+plt.show()
+
+# We compare the evidently problematic slice 82 with the ZADC maps in addition to the raw ADC maps.
+# This could provide a better idea of what caused the model to get confused and hallucinate lesions where none were identified by the physician.
+
+target_idx = 82
+
+mri_adc = X_test[target_idx, :, :, 0]
+mri_zadc = X_test[target_idx, :, :, 1]
+true_mask = y_test[target_idx, :, :, 0]
+pred_mask = test_pred_bin[target_idx, :, :, 0]
+
+fig, axes = plt.subplots(1, 4, figsize=(18, 5))
+
+im0 = axes[0].imshow(mri_adc, cmap='gray')
+axes[0].set_title(f'Slice {target_idx}: Raw ADC')
+axes[0].axis('off')
+fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+
+im1 = axes[1].imshow(mri_zadc, cmap='gray', vmin = -3, vmax = 3)
+axes[1].set_title(f'Slice {target_idx}: ZADC Map')
+axes[1].axis('off')
+fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+axes[2].imshow(true_mask, cmap='hot')
+axes[2].set_title('Ground Truth Annotation')
+axes[2].axis('off')
+
+axes[3].imshow(pred_mask, cmap='hot')
+axes[3].set_title('Model Prediction')
+axes[3].axis('off')
 
 plt.tight_layout()
 plt.show()
