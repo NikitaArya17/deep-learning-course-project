@@ -1,0 +1,2 @@
+run_name,loss_function,learning_rate,weight_decay,batch_size,epochs,patience
+run_06,hybrid_loss,0.0001,0.01,16,100,25
