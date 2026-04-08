@@ -8,4 +8,4 @@ This project is inspired by a challenge listed on the [Grand Challenge](https://
 
 This project will be under active development until April 2026. Code and data will be regularly updated as the project progresses throughout the semester.
 
-The training, test and validation datasets have been derived from the work of [Bao et al., 2023](https://www.biorxiv.org/content/10.1101/2023.06.30.546841v1.full).
+The training, test and validation datasets have been derived from the work of [Bao et al., 2025](https://www.nature.com/articles/s41597-024-03986-7).
