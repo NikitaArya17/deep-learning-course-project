@@ -289,20 +289,7 @@ def dice_coef(y_true, y_pred, smooth=1):
 
 """Sørensen-Dice Coefficient: [Evaluating White Matter Lesion Segmentations with Refined Sørensen-Dice Analysis](https://www.nature.com/articles/s41598-020-64803-w)"""
 
-# We also require a hybrid loss function to account for class imbalance in the training set.
-# This helper function combines the Dice Loss and Focal Loss.
-
-dice_loss = keras.losses.Dice()
-bce_focal_loss = keras.losses.BinaryFocalCrossentropy()
-
-def hybrid_loss(y_true, y_pred):
-  dice = dice_loss(y_true, y_pred)
-  focal = bce_focal_loss(y_true, y_pred)
-  return dice + focal
-
-"""Hybrid Dice Loss: [Minimizing Hybrid Dice Loss for Highly Imbalanced 3D Neuroimage Segmentation](https://ieeexplore.ieee.org/document/9176663)"""
-
-# We define an alternate loss function for the Focal Tversky Loss.
+# We define a loss function for the Focal Tversky Loss.
 # This penalises the model more aggressively for missing smaller, more irregularly shaped, scattered lesions.
 # Hopefully, this loss function should help the model improve at capturing local context in addition to global.
 
@@ -323,11 +310,11 @@ def focal_tversky_loss(y_true, y_pred):
 
     return tf.math.pow((1.0 - tversky_index), gamma)
 
-"""Focal Tversky Loss: [Adaptive Region-Specific Loss for Improved Medical Image Segmentation](https://pmc.ncbi.nlm.nih.gov/articles/PMC11346301/#:~:text=2.2.&text=Recently%2C%20researchers%20have%20proposed%20more,%2Dbased%20auto%2Dsegmentation%20algorithms.)"""
+"""Focal Tversky Loss: [A Novel Focal Tversky Loss Function With Improved Attention U-Net for Lesion Segmentation](https://doi.org/10.1109/ISBI.2019.8759329)"""
 
 model.compile(optimizer = keras.optimizers.AdamW(learning_rate = 0.0001, weight_decay = 0.01), loss = focal_tversky_loss, metrics = [dice_coef, 'accuracy'])
 
-"""AdamW Optimizer: [Semi-Supervised Learning in Medical MRI Segmentation: Brain Tissue with White Matter Hyperintensity Segmentation Using FLAIR MRI](https://pmc.ncbi.nlm.nih.gov/articles/PMC8228966/#:~:text=The%20size%20of%20the%20cropped,0.001%20and%20weight%20decay%20=%200.01.)"""
+"""AdamW Optimizer: [Decoupled Weight Decay Regularization](https://arxiv.org/abs/1711.05101)"""
 
 # We create a log file for our model parameters for reproducibility and experiment tracking.
 
