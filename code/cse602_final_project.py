@@ -195,7 +195,7 @@ This architecture has been chosen as it has achieved a Dice score of 0.8153 whil
 The detailed rationale for this choice of architecture may be found in the explanatory project idea presentation which has been uploaded to this repository.
 
 
-The following model architecture is a baseline architecture to implement this model. The model is under active development and parameters are being edited based on the model's performance on successive training and validation cycles.
+The model's hyperparameters were edited based on the model's performance on successive training and validation cycles. The model from the 8th iteration was selected for the final testing.
 """
 
 def transformer_block(x, num_heads = 4, key_dim = 128, mlp_dim = 256, dropout = 0.1):
