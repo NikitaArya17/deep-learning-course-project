@@ -6,6 +6,6 @@ Mortality rates from HIE can range from 15% to 82% in severe cases ([Korf et al.
 
 This project is inspired by a challenge listed on the [Grand Challenge](https://bonbid-hie2024.grand-challenge.org/) website.
 
-This project will be under active development until April 2026. Code and data will be regularly updated as the project progresses throughout the semester.
+This project was under active development until April 2026, with code and data being regularly updated as the project progressed throughout the semester. The project is now complete. A description of the project idea and final results may be obtained from the provided presentations. The entire code, all input datasets, output metrics and results for each training iteration as well as the final testing, and the weights of the final model, are all available in this repository.
 
 The training, test and validation datasets have been derived from the work of [Bao et al., 2025](https://www.nature.com/articles/s41597-024-03986-7).
